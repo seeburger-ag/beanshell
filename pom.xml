@@ -52,6 +52,9 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <osgi.imported.packages>!org.apache.bsf,!org.apache.bsf.*,*</osgi.imported.packages>
+<!--         <osgi.exported.packages>bsh.*</osgi.exported.packages> -->
     </properties>
 
     <scm>
@@ -171,12 +174,18 @@
                     </archive>
                 </configuration>
             </plugin>
-        <plugin>
-            <groupId>org.apache.felix</groupId>
-            <artifactId>maven-bundle-plugin</artifactId>
-            <version>3.0.1</version>
-            <extensions>true</extensions>
-        </plugin>
+            <plugin>
+                <groupId>org.apache.felix</groupId>
+                <artifactId>maven-bundle-plugin</artifactId>
+                <version>3.0.1</version>
+                <extensions>true</extensions>
+                <configuration>
+                    <instructions>
+<!--                         <Export-Package>${osgi.exported.packages}</Export-Package> -->
+                        <Import-Package>${osgi.imported.packages}</Import-Package>
+                    </instructions>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 
