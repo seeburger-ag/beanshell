@@ -24,13 +24,12 @@
   information on the Apache Software Foundation, please see
   <http://www.apache.org />.
 -->
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.seeburger.fork</groupId>
     <artifactId>bsh</artifactId>
-    <version>2.1.0.SEE1-SNAPSHOT</version>
+    <version>2.1.0.SEE1</version>
     <packaging>bundle</packaging>
 
     <name>BeanShell</name>
@@ -61,7 +60,7 @@
         <connection>scm:git:git://github.com/seeburger-ag/beanshell.git</connection>
         <developerConnection>scm:git:git@github.com:seeburger-ag/beanshell.git</developerConnection>
         <url>https://github.com/seeburger-ag/beanshell/</url>
-        <tag>HEAD</tag>
+        <tag>bsh-2.1.0.SEE1</tag>
     </scm>
     <developers>
         <!-- Current maintainers according to
