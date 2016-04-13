@@ -30,7 +30,6 @@ package bsh.classpath;
 import java.net.*;
 import java.util.*;
 import java.lang.ref.*;
-import java.io.IOException;
 import java.io.*;
 import bsh.classpath.BshClassPath.ClassSource;
 import bsh.classpath.BshClassPath.JarClassSource;
@@ -38,7 +37,7 @@ import bsh.classpath.BshClassPath.GeneratedClassSource;
 import bsh.BshClassManager;
 import bsh.ClassPathException;
 import bsh.Interpreter;  // for debug()
-import bsh.UtilEvalError; 
+import bsh.UtilEvalError;
 
 /**
 	<pre>
@@ -56,18 +55,18 @@ import bsh.UtilEvalError;
 	on the bsh classloader architecture.
 
 	Bsh has a multi-tiered class loading architecture.  No class loader is
-	created unless/until a class is generated, the classpath is modified, 
+	created unless/until a class is generated, the classpath is modified,
 	or a class is reloaded.
 
 	Note: we may need some synchronization in here
 
 	Note on jdk1.2 dependency:
 
-	We are forced to use weak references here to accommodate all of the 
-	fleeting namespace listeners.  (NameSpaces must be informed if the class 
-	space changes so that they can un-cache names).  I had the interesting 
-	thought that a way around this would be to implement BeanShell's own 
-	garbage collector...  Then I came to my senses and said - screw it, 
+	We are forced to use weak references here to accommodate all of the
+	fleeting namespace listeners.  (NameSpaces must be informed if the class
+	space changes so that they can un-cache names).  I had the interesting
+	thought that a way around this would be to implement BeanShell's own
+	garbage collector...  Then I came to my senses and said - screw it,
 	class re-loading will require 1.2.
 
 	---------------------
@@ -142,23 +141,29 @@ public class ClassManagerImpl extends BshClassManager
 	*/
 	public Class classForName( String name )
 	{
-		// check positive cache
-		Class c = (Class)absoluteClassCache.get(name);
-		if (c != null )
-			return c;
+	    ClassCachePK classCachePK = new ClassCachePK(name, externalClassLoader);
+        // check positive cache
+        Class<?> cachedClass = absoluteClassCache.get(classCachePK);
+        if (cachedClass != null ) {
+            if ( Interpreter.DEBUG ) {
+                Interpreter.debug("absoluteClassCache hit: " + name);
+            }
+            return cachedClass;
+        }
 
-		// check negative cache
-		if ( absoluteNonClasses.get(name)!=null ) {
-			if ( Interpreter.DEBUG )
-				Interpreter.debug("absoluteNonClass list hit: "+name);
-			return null;
-		}
+        // check negative cache
+        if ( absoluteNonClasses.get(classCachePK) != null ) {
+            if ( Interpreter.DEBUG )
+                Interpreter.debug("absoluteNonClasses hit: " + name);
+            return null;
+        }
 
 		if ( Interpreter.DEBUG )
 			Interpreter.debug("Trying to load class: "+name);
 
 		// Check explicitly mapped (reloaded) class...
 		ClassLoader overlayLoader = getLoaderForClass( name );
+		Class<?> c = null;
 		if ( overlayLoader != null )
 		{
 			try {
@@ -174,7 +179,7 @@ public class ClassManagerImpl extends BshClassManager
 			// throw an error?
 		}
 
-		// insure that core classes are loaded from the same loader
+		// ensure that core classes are loaded from the same loader
 		if ( c == null ) {
 			if ( name.startsWith( BSH_PACKAGE ) )
 				try {
@@ -205,7 +210,7 @@ public class ClassManagerImpl extends BshClassManager
 		if ( c ==  null )
 		{
 			try {
-				ClassLoader contextClassLoader = 
+				ClassLoader contextClassLoader =
 					Thread.currentThread().getContextClassLoader();
 				if ( contextClassLoader != null )
 					c = Class.forName( name, true, contextClassLoader );
@@ -235,7 +240,7 @@ public class ClassManagerImpl extends BshClassManager
 		Get a resource URL using the BeanShell classpath
 		@param path should be an absolute path
 	*/
-	public URL getResource( String path ) 
+	public URL getResource( String path )
 	{
 		URL url = null;
 		if ( baseLoader != null )
@@ -250,7 +255,7 @@ public class ClassManagerImpl extends BshClassManager
 		Get a resource stream using the BeanShell classpath
 		@param path should be an absolute path
 	*/
-	public InputStream getResourceAsStream( String path ) 
+	public InputStream getResourceAsStream( String path )
 	{
 		InputStream in = null;
 		if ( baseLoader != null )
@@ -273,8 +278,8 @@ public class ClassManagerImpl extends BshClassManager
 
 	/**
 	*/
-	public void addClassPath( URL path ) 
-		throws IOException 
+	public void addClassPath( URL path )
+		throws IOException
 	{
 		if ( baseLoader == null )
 			setClassPath( new URL [] { path } );
@@ -287,7 +292,7 @@ public class ClassManagerImpl extends BshClassManager
 	}
 
 	/**
-		Clear all classloading behavior and class caches and reset to 
+		Clear all classloading behavior and class caches and reset to
 		initial state.
 	*/
 	public void reset()
@@ -300,7 +305,7 @@ public class ClassManagerImpl extends BshClassManager
 
 	/**
 		Set a new base classpath and create a new base classloader.
-		This means all types change. 
+		This means all types change.
 	*/
 	public void setClassPath( URL [] cp ) {
 		baseClassPath.setPath( cp );
@@ -315,7 +320,7 @@ public class ClassManagerImpl extends BshClassManager
 
 		No point in including the boot class path (can't reload thos).
 	*/
-	public void reloadAllClasses() throws ClassPathException 
+	public void reloadAllClasses() throws ClassPathException
 	{
 		BshClassPath bcp = new BshClassPath("temp");
 		bcp.addComponent( baseClassPath );
@@ -337,7 +342,7 @@ public class ClassManagerImpl extends BshClassManager
 		whenever we are asked for classes in the appropriate space.
 		For this we use a DiscreteFilesClassLoader
 	*/
-	public void reloadClasses( String [] classNames ) 
+	public void reloadClasses( String [] classNames )
 		throws ClassPathException
 	{
 		// validate that it is a class here?
@@ -346,26 +351,26 @@ public class ClassManagerImpl extends BshClassManager
 		if ( baseLoader == null )
 			initBaseLoader();
 
-		DiscreteFilesClassLoader.ClassSourceMap map = 
+		DiscreteFilesClassLoader.ClassSourceMap map =
 			new DiscreteFilesClassLoader.ClassSourceMap();
 
 		for (int i=0; i< classNames.length; i++)
 		{
 			String name = classNames[i];
 
-			// look in baseLoader class path 
+			// look in baseLoader class path
 			ClassSource classSource = baseClassPath.getClassSource( name );
 
-			// look in user class path 
+			// look in user class path
 			if ( classSource == null ) {
 				BshClassPath.getUserClassPath().insureInitialized();
-				classSource = BshClassPath.getUserClassPath().getClassSource( 
+				classSource = BshClassPath.getUserClassPath().getClassSource(
 					name );
 			}
 
 			// No point in checking boot class path, can't reload those.
 			// else we could have used fullClassPath above.
-				
+
 			if ( classSource == null )
 				throw new ClassPathException("Nothing known about class: "
 					+name );
@@ -386,7 +391,7 @@ public class ClassManagerImpl extends BshClassManager
 		// map those classes the loader in the overlay map
 		Iterator it = map.keySet().iterator();
 		while ( it.hasNext() )
-			loaderMap.put( (String)it.next(), cl );
+			loaderMap.put( it.next(), cl );
 
 		classLoaderChanged();
 	}
@@ -394,17 +399,17 @@ public class ClassManagerImpl extends BshClassManager
 	/**
 		Reload all classes in the specified package: e.g. "com.sun.tools"
 
-		The special package name "<unpackaged>" can be used to refer 
+		The special package name "<unpackaged>" can be used to refer
 		to unpackaged classes.
 	*/
-	public void reloadPackage( String pack ) 
-		throws ClassPathException 
+	public void reloadPackage( String pack )
+		throws ClassPathException
 	{
-		Collection classes = 
+		Collection classes =
 			baseClassPath.getClassesForPackage( pack );
 
 		if ( classes == null )
-			classes = 
+			classes =
 				BshClassPath.getUserClassPath().getClassesForPackage( pack );
 
 		// no point in checking boot class path, can't reload those
@@ -433,12 +438,12 @@ public class ClassManagerImpl extends BshClassManager
 	{
 		if ( fullClassPath != null )
 			return fullClassPath;
-	
+
 		fullClassPath = new BshClassPath("BeanShell Full Class Path");
 		fullClassPath.addComponent( BshClassPath.getUserClassPath() );
 		try {
 			fullClassPath.addComponent( BshClassPath.getBootClassPath() );
-		} catch ( ClassPathException e ) { 
+		} catch ( ClassPathException e ) {
 			System.err.println("Warning: can't get boot class path");
 		}
 		fullClassPath.addComponent( baseClassPath );
@@ -450,7 +455,7 @@ public class ClassManagerImpl extends BshClassManager
 		Support for "import *;"
 		Hide details in here as opposed to NameSpace.
 	*/
-	public void doSuperImport() 
+	public void doSuperImport()
 		throws UtilEvalError
 	{
 		// Should we prevent it from happening twice?
@@ -476,7 +481,7 @@ public class ClassManagerImpl extends BshClassManager
 		Return the name or null if none is found,
 		Throw an ClassPathException containing detail if name is ambigous.
 	*/
-	public String getClassNameByUnqName( String name ) 
+	public String getClassNameByUnqName( String name )
 		throws ClassPathException
 	{
 		return getClassPath().getClassNameByUnqName( name );
@@ -520,7 +525,7 @@ public class ClassManagerImpl extends BshClassManager
 
 		@exception ClassPathException can be thrown by reloadClasses
 	*/
-	public Class defineClass( String name, byte [] code ) 
+	public Class defineClass( String name, byte [] code )
 	{
 //System.out.println( "defineClass: "+name );
 		baseClassPath.setClassSource( name, new GeneratedClassSource( code ) );
@@ -533,19 +538,19 @@ public class ClassManagerImpl extends BshClassManager
 	}
 
 	/**
-		Clear global class cache and notify namespaces to clear their 
+		Clear global class cache and notify namespaces to clear their
 		class caches.
 
-		The listener list is implemented with weak references so that we 
+		The listener list is implemented with weak references so that we
 		will not keep every namespace in existence forever.
 	*/
-	protected void classLoaderChanged() 
+	protected void classLoaderChanged()
 	{
 		// clear the static caches in BshClassManager
 		clearCaches();
 
 		Vector toRemove = new Vector(); // safely remove
-		for ( Enumeration e = listeners.elements(); e.hasMoreElements(); ) 
+		for ( Enumeration e = listeners.elements(); e.hasMoreElements(); )
 		{
 			WeakReference wr = (WeakReference)e.nextElement();
 			Listener l = (Listener)wr.get();
@@ -554,11 +559,11 @@ public class ClassManagerImpl extends BshClassManager
 			else
 			  l.classLoaderChanged();
 		}
-		for( Enumeration e = toRemove.elements(); e.hasMoreElements(); ) 
+		for( Enumeration e = toRemove.elements(); e.hasMoreElements(); )
 			listeners.removeElement( e.nextElement() );
 	}
 
-	public void dump( PrintWriter i ) 
+	public void dump( PrintWriter i )
 	{
 		i.println("Bsh Class Manager Dump: ");
 		i.println("----------------------- ");

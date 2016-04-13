@@ -27,20 +27,31 @@
 
 package bsh;
 
-import java.net.*;
-import java.util.*;
 import java.io.IOException;
-import java.io.*;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
+import java.io.Serializable;
+import java.lang.ref.Reference;
+import java.lang.ref.ReferenceQueue;
+import java.lang.ref.SoftReference;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.net.URL;
+import java.util.AbstractMap;
+import java.util.Hashtable;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
 	BshClassManager manages all classloading in BeanShell.
 	It also supports a dynamically loaded extension (bsh.classpath package)
 	which allows classpath extension and class file reloading.
 
-	Currently the extension relies on 1.2 for BshClassLoader and weak 
-	references.  
+	Currently the extension relies on 1.2 for BshClassLoader and weak
+	references.
 
 	See http://www.beanshell.org/manual/classloading.html for details
 	on the bsh classloader architecture.
@@ -60,75 +71,86 @@ import java.lang.reflect.Modifier;
 	implementation (the optional bsh.classpath package) to accommodate all of
 	the fleeting namespace listeners as they fall out of scope.  (NameSpaces
 	must be informed if the class space changes so that they can un-cache
-	names).  
+	names).
 	<p>
 
 	Perhaps a simpler idea would be to have entities that reference cached
 	types always perform a light weight check with a counter / reference
-	value and use that to detect changes in the namespace.  This puts the 
+	value and use that to detect changes in the namespace.  This puts the
 	burden on the consumer to check at appropriate times, but could eliminate
-	the need for the listener system in many places and the necessity of weak 
+	the need for the listener system in many places and the necessity of weak
 	references in this package.
 	<p>
 */
 public class BshClassManager
 {
 	/** Identifier for no value item.  Use a hashtable as a Set. */
-	private static Object NOVALUE = new Object(); 
-	/** 
-		The interpreter which created the class manager 
+	private static final Object NOVALUE = new Object();
+	/**
+		The interpreter which created the class manager
 		This is used to load scripted classes from source files.
 	*/
 	private Interpreter declaringInterpreter;
-	
+
 	/**
 		An external classloader supplied by the setClassLoader() command.
 	*/
 	protected ClassLoader externalClassLoader;
 
 	/**
-		Global cache for things we know are classes.
-		Note: these should probably be re-implemented with Soft references.
-		(as opposed to strong or Weak)
-	*/
-    protected transient Hashtable absoluteClassCache = new Hashtable();
-	/**
-		Global cache for things we know are *not* classes.
-		Note: these should probably be re-implemented with Soft references.
-		(as opposed to strong or Weak)
-	*/
-    protected transient Hashtable absoluteNonClasses = new Hashtable();
+	 * Flag disabling classloader caching completely.
+	 */
+	protected static final boolean disableClassCache = Boolean.getBoolean("bsh.classloader.cache.disable");
+
+    /**
+     * Class cache. Using soft references to not hinder GC.
+     * No upper limits, but should not be a problem,
+     * since we only add some {@link SoftReference} objects to the already existing memory usage.
+     */
+    protected static final Map<ClassCachePK, Class<?>> absoluteClassCache = new SoftConcurrentHashMap<ClassCachePK, Class<?>>();
+
+//  /**
+//      Global cache for things we know are classes.
+//      Note: these should probably be re-implemented with Soft references.
+//      (as opposed to strong or Weak)
+//  */
+//  protected transient Hashtable absoluteClassCache = new Hashtable();
+
+    /**
+        Global cache for things we know are *not* classes.
+     */
+    protected static final Map<ClassCachePK, Object> absoluteNonClasses = new ConcurrentHashMap<ClassCachePK, Object>();
 
 	/**
 		Caches for resolved object and static methods.
 		We keep these maps separate to support fast lookup in the general case
 		where the method may be either.
 	*/
-	protected transient Hashtable resolvedObjectMethods = new Hashtable();
-	protected transient Hashtable resolvedStaticMethods = new Hashtable();
+	protected transient Hashtable<SignatureKey, Method> resolvedObjectMethods = new Hashtable<SignatureKey, Method>();
+	protected transient Hashtable<SignatureKey, Method> resolvedStaticMethods = new Hashtable<SignatureKey, Method>();
 
-	protected transient Hashtable definingClasses = new Hashtable();
-	protected transient Hashtable definingClassesBaseNames = new Hashtable();
+	protected transient Hashtable<String, Object> definingClasses = new Hashtable<String, Object>();
+	protected transient Hashtable<String, String> definingClassesBaseNames = new Hashtable<String, String>();
 
 	/** @see #associateClass( Class ) */
-	protected transient Hashtable associatedClasses = new Hashtable();
+	protected transient Hashtable<String, Class<?>> associatedClasses = new Hashtable<String, Class<?>>();
 
 	/**
-		Create a new instance of the class manager.  
+		Create a new instance of the class manager.
 		Class manager instnaces are now associated with the interpreter.
 
 		@see bsh.Interpreter.getClassManager()
 		@see bsh.Interpreter.setClassLoader( ClassLoader )
 	*/
-	public static BshClassManager createClassManager( Interpreter interpreter ) 
+	public static BshClassManager createClassManager( Interpreter interpreter )
 	{
 		BshClassManager manager;
 
 		// Do we have the necessary jdk1.2 packages and optional package?
-		if ( Capabilities.classExists("java.lang.ref.WeakReference") 
-			&& Capabilities.classExists("java.util.HashMap") 
-			&& Capabilities.classExists("bsh.classpath.ClassManagerImpl") 
-		) 
+		if ( Capabilities.classExists("java.lang.ref.WeakReference")
+			&& Capabilities.classExists("java.util.HashMap")
+			&& Capabilities.classExists("bsh.classpath.ClassManagerImpl")
+		)
 			try {
 				// Try to load the module
 				// don't refer to it directly here or we're dependent upon it
@@ -137,7 +159,7 @@ public class BshClassManager
 			} catch ( Exception e ) {
 				throw new InterpreterError("Error loading classmanager: "+e);
 			}
-		else 
+		else
 			manager = new BshClassManager();
 
 		if ( interpreter == null )
@@ -153,12 +175,12 @@ public class BshClassManager
 	/**
 		Load the specified class by name, taking into account added classpath
 		and reloaded classes, etc.
-		Note: Again, this is just a trivial implementation. 
+		Note: Again, this is just a trivial implementation.
 		See bsh.classpath.ClassManagerImpl for the fully functional class
 		management package.
 		@return the class or null
 	*/
-	public Class classForName( String name ) 
+	public Class classForName( String name )
 	{
 		if ( isClassBeingDefined( name ) )
 			throw new InterpreterError(
@@ -171,12 +193,12 @@ public class BshClassManager
 		} catch ( ClassNotFoundException e ) { /*ignore*/ }
 
 		// try scripted class
-		if ( clas == null ) 
+		if ( clas == null )
 			clas = loadSourceClass( name );
 
 		return clas;
 	}
-	
+
 	// Move me to classpath/ClassManagerImpl???
 	protected Class loadSourceClass( String name )
 	{
@@ -203,18 +225,18 @@ public class BshClassManager
 	/**
 		Perform a plain Class.forName() or call the externally provided
 		classloader.
-		If a BshClassManager implementation is loaded the call will be 
+		If a BshClassManager implementation is loaded the call will be
 		delegated to it, to allow for additional hooks.
 		<p/>
 
-		This simply wraps that bottom level class lookup call and provides a 
-		central point for monitoring and handling certain Java version 
+		This simply wraps that bottom level class lookup call and provides a
+		central point for monitoring and handling certain Java version
 		dependent bugs, etc.
 
 		@see #classForName( String )
 		@return the class
 	*/
-	public Class plainClassForName( String name ) 
+	public Class plainClassForName( String name )
 		throws ClassNotFoundException
 	{
 		Class c = null;
@@ -231,9 +253,9 @@ public class BshClassManager
 			Original note: Jdk under Win is throwing these to
 			warn about lower case / upper case possible mismatch.
 			e.g. bsh.console bsh.Console
-	
-			Update: Prior to 1.3 we were squeltching NoClassDefFoundErrors 
-			which was very annoying.  I cannot reproduce the original problem 
+
+			Update: Prior to 1.3 we were squeltching NoClassDefFoundErrors
+			which was very annoying.  I cannot reproduce the original problem
 			and this was never a valid solution.  If there are legacy VMs that
 			have problems we can include a more specific test for them here.
 		*/
@@ -248,14 +270,14 @@ public class BshClassManager
 		Get a resource URL using the BeanShell classpath
 		@param path should be an absolute path
 	*/
-	public URL getResource( String path ) 
+	public URL getResource( String path )
 	{
 		URL url = null;
 		if ( externalClassLoader != null )
 		{
 			// classloader wants no leading slash
 			url = externalClassLoader.getResource( path.substring(1) );
-		} 
+		}
 		if ( url == null )
 			url = Interpreter.class.getResource( path );
 
@@ -265,14 +287,14 @@ public class BshClassManager
 		Get a resource stream using the BeanShell classpath
 		@param path should be an absolute path
 	*/
-	public InputStream getResourceAsStream( String path ) 
+	public InputStream getResourceAsStream( String path )
 	{
 		InputStream in = null;
 		if ( externalClassLoader != null )
 		{
 			// classloader wants no leading slash
 			in = externalClassLoader.getResourceAsStream( path.substring(1) );
-		} 
+		}
 		if ( in == null )
 			in = Interpreter.class.getResourceAsStream( path );
 
@@ -281,17 +303,23 @@ public class BshClassManager
 
 	/**
 		Cache info about whether name is a class or not.
-		@param value 
+		@param value
 			if value is non-null, cache the class
 			if value is null, set the flag that it is *not* a class to
 			speed later resolution
 	*/
 	public void cacheClassInfo( String name, Class value ) {
-		if ( value != null )
-			absoluteClassCache.put( name, value );
-		else
-			absoluteNonClasses.put( name, NOVALUE );
-	}
+        if ( value != null ) {
+            if (!disableClassCache) {
+                ClassCachePK classCachePK = new ClassCachePK(name, externalClassLoader);
+                absoluteClassCache.put( classCachePK, value );
+            }
+        }
+        else if (!disableClassCache) {
+            ClassCachePK classCachePK = new ClassCachePK(name, externalClassLoader);
+            absoluteNonClasses.put( classCachePK, NOVALUE );
+        }
+    }
 
 	/**
 	 * Associate a persistent generated class implementation with this
@@ -318,18 +346,18 @@ public class BshClassManager
 	}
 
 	/**
-		Cache a resolved (possibly overloaded) method based on the 
+		Cache a resolved (possibly overloaded) method based on the
 		argument types used to invoke it, subject to classloader change.
 		Static and Object methods are cached separately to support fast lookup
 		in the general case where either will do.
 	*/
-	public void cacheResolvedMethod( 
-		Class clas, Class [] types, Method method ) 
+	public void cacheResolvedMethod(
+		Class clas, Class [] types, Method method )
 	{
 		if ( Interpreter.DEBUG )
 			Interpreter.debug(
 				"cacheResolvedMethod putting: " + clas +" "+ method );
-		
+
 		SignatureKey sk = new SignatureKey( clas, method.getName(), types );
 		if ( Modifier.isStatic( method.getModifiers() ) )
 			resolvedStaticMethods.put( sk, method );
@@ -342,8 +370,8 @@ public class BshClassManager
 		@param onlyStatic specifies that only a static method may be returned.
 		@return the Method or null
 	*/
-	protected Method getResolvedMethod( 
-		Class clas, String methodName, Class [] types, boolean onlyStatic  ) 
+	protected Method getResolvedMethod(
+		Class clas, String methodName, Class [] types, boolean onlyStatic  )
 	{
 		SignatureKey sk = new SignatureKey( clas, methodName, types );
 
@@ -369,16 +397,16 @@ public class BshClassManager
 		Clear the caches in BshClassManager
 		@see public void #reset() for external usage
 	*/
-	protected void clearCaches() 
+	protected void clearCaches()
 	{
-    	absoluteNonClasses = new Hashtable();
-    	absoluteClassCache = new Hashtable();
-    	resolvedObjectMethods = new Hashtable();
-    	resolvedStaticMethods = new Hashtable();
+    	// absoluteNonClasses.clear();
+    	// absoluteClassCache.clear();
+    	resolvedObjectMethods.clear();
+    	resolvedStaticMethods.clear();
 	}
 
 	/**
-		Set an external class loader.  BeanShell will use this at the same 
+		Set an external class loader.  BeanShell will use this at the same
 		point it would otherwise use the plain Class.forName().
 		i.e. if no explicit classpath management is done from the script
 		(addClassPath(), setClassPath(), reloadClasses()) then BeanShell will
@@ -388,7 +416,7 @@ public class BshClassManager
 		However BeanShell is not currently able to reload
 		classes supplied through the external classloader.
 	*/
-	public void setClassLoader( ClassLoader externalCL ) 
+	public void setClassLoader( ClassLoader externalCL )
 	{
 		externalClassLoader = externalCL;
 		classLoaderChanged();
@@ -401,15 +429,15 @@ public class BshClassManager
 	/**
 		Clear all loaders and start over.  No class loading.
 	*/
-	public void reset() { 
+	public void reset() {
 		clearCaches();
 	}
 
 	/**
 		Set a new base classpath and create a new base classloader.
-		This means all types change. 
+		This means all types change.
 	*/
-	public void setClassPath( URL [] cp ) 
+	public void setClassPath( URL [] cp )
 		throws UtilEvalError
 	{
 		throw cmUnavailable();
@@ -431,7 +459,7 @@ public class BshClassManager
 		For this we use a DiscreteFilesClassLoader
 	*/
 	public void reloadClasses( String [] classNames )
-		throws UtilEvalError 
+		throws UtilEvalError
 	{
 		throw cmUnavailable();
 	}
@@ -439,11 +467,11 @@ public class BshClassManager
 	/**
 		Reload all classes in the specified package: e.g. "com.sun.tools"
 
-		The special package name "<unpackaged>" can be used to refer 
+		The special package name "<unpackaged>" can be used to refer
 		to unpackaged classes.
 	*/
-	public void reloadPackage( String pack ) 
-		throws UtilEvalError 
+	public void reloadPackage( String pack )
+		throws UtilEvalError
 	{
 		throw cmUnavailable();
 	}
@@ -460,8 +488,8 @@ public class BshClassManager
 		Support for "import *;"
 		Hide details in here as opposed to NameSpace.
 	*/
-	protected void doSuperImport() 
-		throws UtilEvalError 
+	protected void doSuperImport()
+		throws UtilEvalError
 	{
 		throw cmUnavailable();
 	}
@@ -469,7 +497,7 @@ public class BshClassManager
 	/**
 		A "super import" ("import *") operation has been performed.
 	*/
-	protected boolean hasSuperImport() 
+	protected boolean hasSuperImport()
 	{
 		return false;
 	}
@@ -478,8 +506,8 @@ public class BshClassManager
 		Return the name or null if none is found,
 		Throw an ClassPathException containing detail if name is ambigous.
 	*/
-	protected String getClassNameByUnqName( String name ) 
-		throws UtilEvalError 
+	protected String getClassNameByUnqName( String name )
+		throws UtilEvalError
 	{
 		throw cmUnavailable();
 	}
@@ -488,8 +516,8 @@ public class BshClassManager
 
 	public void removeListener( Listener l ) { }
 
-	public void dump( PrintWriter pw ) { 
-		pw.println("BshClassManager: no class manager."); 
+	public void dump( PrintWriter pw ) {
+		pw.println("BshClassManager: no class manager.");
 	}
 
 	/**
@@ -502,7 +530,7 @@ public class BshClassManager
 		process of defining two classes in different packages with the same
 		base name.  To remove this limitation requires that we work through
 		namespace imports in an analogous (or using the same path) as regular
-		class import resolution.  This workaround should handle most cases 
+		class import resolution.  This workaround should handle most cases
 		so we'll try it for now.
 	*/
 	protected void definingClass( String className ) {
@@ -512,10 +540,10 @@ public class BshClassManager
 			baseName = baseName.substring(i+1);
 		String cur = (String)definingClassesBaseNames.get( baseName );
 		if ( cur != null )
-			throw new InterpreterError("Defining class problem: "+className 
+			throw new InterpreterError("Defining class problem: "+className
 				+": BeanShell cannot yet simultaneously define two or more "
 				+"dependent classes of the same name.  Attempt to define: "
-				+ className +" while defining: "+cur 
+				+ className +" while defining: "+cur
 			);
 		definingClasses.put( className, NOVALUE );
 		definingClassesBaseNames.put( baseName, className );
@@ -548,7 +576,7 @@ public class BshClassManager
 		The real implementation in the classpath.ClassManagerImpl handles
 		reloading of the generated classes.
 	*/
-	public Class defineClass( String name, byte [] code ) 
+	public Class defineClass( String name, byte [] code )
 	{
 		throw new InterpreterError("Can't create class ("+name
 			+") without class manager package.");
@@ -556,19 +584,19 @@ public class BshClassManager
 		Old implementation injected classes into the parent classloader.
 		This was incorrect behavior for several reasons.  The biggest problem
 		is that classes could therefore only be defined once across all
-		executions of the script...  
+		executions of the script...
 
 		ClassLoader cl = this.getClass().getClassLoader();
 		Class clas;
 		try {
-			clas = (Class)Reflect.invokeObjectMethod( 
-				cl, "defineClass", 
-				new Object [] { 
-					name, code, 
-					new Primitive( (int)0 )/offset/, 
-					new Primitive( code.length )/len/ 
-				}, 
-				(Interpreter)null, (CallStack)null, (SimpleNode)null 
+			clas = (Class)Reflect.invokeObjectMethod(
+				cl, "defineClass",
+				new Object [] {
+					name, code,
+					new Primitive( (int)0 )/offset/,
+					new Primitive( code.length )/len/
+				},
+				(Interpreter)null, (CallStack)null, (SimpleNode)null
 			);
 		} catch ( Exception e ) {
 			e.printStackTrace();
@@ -596,14 +624,14 @@ public class BshClassManager
 			"ClassLoading features unavailable.");
 	}
 
-	public static interface Listener 
+	public static interface Listener
 	{
 		public void classLoaderChanged();
 	}
 
 	/**
-		SignatureKey serves as a hash of a method signature on a class 
-		for fast lookup of overloaded and general resolved Java methods. 
+		SignatureKey serves as a hash of a method signature on a class
+		for fast lookup of overloaded and general resolved Java methods.
 		<p>
 	*/
 	/*
@@ -629,13 +657,13 @@ public class BshClassManager
 			this.types = types;
 		}
 
-		public int hashCode() 
-		{ 
-			if ( hashCode == 0 ) 
+		public int hashCode()
+		{
+			if ( hashCode == 0 )
 			{
 				hashCode = clas.hashCode() * methodName.hashCode();
 				if ( types == null ) // no args method
-					return hashCode; 
+					return hashCode;
 				for( int i =0; i < types.length; i++ ) {
 					int hc = types[i] == null ? 21 : types[i].hashCode();
 					hashCode = hashCode*(i+1) + hc;
@@ -644,7 +672,7 @@ public class BshClassManager
 			return hashCode;
 		}
 
-		public boolean equals( Object o ) { 
+		public boolean equals( Object o ) {
 			SignatureKey target = (SignatureKey)o;
 			if ( types == null )
 				return target.types == null;
@@ -656,11 +684,11 @@ public class BshClassManager
 				return false;
 			for( int i =0; i< types.length; i++ )
 			{
-				if ( types[i]==null ) 
+				if ( types[i]==null )
 				{
 					if ( !(target.types[i]==null) )
 						return false;
-				} else 
+				} else
 					if ( !types[i].equals( target.types[i] ) )
 						return false;
 			}
@@ -668,4 +696,236 @@ public class BshClassManager
 			return true;
 		}
 	}
+
+	/**
+     * ClassCachePK.
+     * {@link ClassLoader} does not redefine equals and hashCode, so this may have some potential issues,
+     * but usually it works fine and
+     * but best way to map a {@link Class} to its class name / {@link ClassLoader} combination.
+     *
+     * @author Rico Neubauer
+     */
+    protected static class ClassCachePK {
+
+        private final String className;
+        private final ClassLoader classLoader;
+
+        public ClassCachePK(String className, ClassLoader classLoader) {
+            this.className = className;
+            this.classLoader = classLoader;
+        }
+
+        /**
+         * @see java.lang.Object#hashCode()
+         */
+        @Override
+        public int hashCode() {
+            final int prime = 31;
+            int result = 1;
+            result = prime * result + ((classLoader == null) ? 0 : classLoader.hashCode());
+            result = prime * result + ((className == null) ? 0 : className.hashCode());
+            return result;
+        }
+
+        /**
+         * @see java.lang.Object#equals(java.lang.Object)
+         */
+        @Override
+        public boolean equals(Object obj) {
+            if (this == obj)
+                return true;
+            if (obj == null)
+                return false;
+            if (getClass() != obj.getClass())
+                return false;
+            ClassCachePK other = (ClassCachePK)obj;
+            if (classLoader == null) {
+                if (other.classLoader != null)
+                    return false;
+            }
+            else if (!classLoader.equals(other.classLoader))
+                return false;
+            if (className == null) {
+                if (other.className != null)
+                    return false;
+            }
+            else if (!className.equals(other.className))
+                return false;
+            return true;
+        }
+
+        /**
+         * @see java.lang.Object#toString()
+         */
+        @Override
+        public String toString() {
+            StringBuilder builder = new StringBuilder();
+            builder.append("ClassCachePK [className=");
+            builder.append(className);
+            builder.append(", classLoader=");
+            builder.append(classLoader);
+            builder.append("]");
+            return builder.toString();
+        }
+
+    }
+
+
+    /**
+     * SoftConcurrentHashMap.
+     * You can use the SoftConcurrentHashMap just like an ordinary HashMap,
+     * except that the entries will disappear if we are running low on memory.
+     * Ideal if you want to build a cache.
+     *
+     * This implementation <b>is</b> thread-safe (just like {@link ConcurrentHashMap}).
+     * This class does <b>not</b> allow null to be used as a key or value.
+     *
+     * Inspired by http://www.javaspecialists.eu/archive/Issue098.html
+     *
+     * @author Rico Neubauer
+     * @since 2010-04-27
+     */
+    protected static class SoftConcurrentHashMap<K, V> extends AbstractMap<K, V> implements Serializable {
+        private static final long serialVersionUID = 1L;
+
+        /** The internal HashMap that will hold the SoftReference. */
+        private final Map<K, SoftReference<V>> hash = new ConcurrentHashMap<K, SoftReference<V>>();
+
+        private final Map<SoftReference<V>, K> reverseLookup = new ConcurrentHashMap<SoftReference<V>, K>();
+
+        /** Reference queue for cleared SoftReference objects. */
+        protected final ReferenceQueue<V> queue = new ReferenceQueue<V>();
+
+
+        @Override
+        public V get(Object key)
+        {
+            expungeStaleEntries();
+            V result = null;
+            // We get the SoftReference represented by that key
+            final SoftReference<V> soft_ref = hash.get(key);
+            if (soft_ref != null)
+            {
+                // From the SoftReference we get the value, which can be
+                // null if it has been garbage collected
+                result = soft_ref.get();
+                if (result == null)
+                {
+                    // If the value has been garbage collected, remove the
+                    // entry from the HashMap.
+                    hash.remove(key);
+                    reverseLookup.remove(soft_ref);
+                }
+            }
+            return result;
+        }
+
+
+        private void expungeStaleEntries()
+        {
+            Reference<? extends V> sv;
+            while ((sv = queue.poll()) != null)
+            {
+                final K removed = reverseLookup.remove(sv);
+                if (removed != null)
+                {
+                    hash.remove(removed);
+                }
+            }
+        }
+
+
+        @Override
+        public V put(K key, V value)
+        {
+            expungeStaleEntries();
+            final SoftReference<V> soft_ref = new SoftReference<V>(value, queue);
+            final SoftReference<V> oldSoftRef = hash.put(key, soft_ref);
+            reverseLookup.put(soft_ref, key);
+            if (oldSoftRef == null)
+            {
+                return null;
+            }
+            reverseLookup.remove(oldSoftRef);
+            return oldSoftRef.get();
+        }
+
+
+        @Override
+        public V remove(Object key)
+        {
+            expungeStaleEntries();
+            final SoftReference<V> softRef = hash.remove(key);
+            // small concurrency gap - reverseLookup still holds entry
+            if (softRef == null)
+            {
+                return null;
+            }
+            reverseLookup.remove(softRef);
+            return softRef.get();
+        }
+
+
+        @Override
+        public void clear()
+        {
+            hash.clear();
+            reverseLookup.clear();
+        }
+
+
+        @Override
+        public int size()
+        {
+            expungeStaleEntries();
+            return hash.size();
+        }
+
+
+        /**
+         * Returns a copy of the key/values in the map at the point of calling.
+         * However, setValue still sets the value in the actual SoftHashMap.
+         *
+         * @return a copy of the key/values in the map at the point of calling.
+         * @see java.util.AbstractMap#entrySet()
+         * @inheritDoc
+         */
+        @Override
+        public Set<Entry<K, V>> entrySet()
+        {
+            expungeStaleEntries();
+            final Set<Entry<K, V>> result = new LinkedHashSet<Entry<K, V>>();
+            for (final Entry<K, SoftReference<V>> entry : hash.entrySet())
+            {
+                final V value = entry.getValue().get();
+                if (value != null)
+                {
+                    result.add(new Entry<K, V>()
+                    {
+                        @Override
+                        public K getKey()
+                        {
+                            return entry.getKey();
+                        }
+
+
+                        @Override
+                        public V getValue()
+                        {
+                            return value;
+                        }
+
+
+                        @Override
+                        public V setValue(V v)
+                        {
+                            entry.setValue(new SoftReference<V>(v, queue));
+                            return value;
+                        }
+                    });
+                }
+            }
+            return result;
+        }
+    }
 }
