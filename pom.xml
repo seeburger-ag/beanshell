@@ -59,7 +59,7 @@
 
     <scm>
         <connection>scm:git:git://github.com/seeburger-ag/beanshell.git</connection>
-        <developerConnection>scm:git:git@github.com:beanshell/beanshell.git</developerConnection>
+        <developerConnection>scm:git:git@github.com:seeburger-ag/beanshell.git</developerConnection>
         <url>https://github.com/seeburger-ag/beanshell/</url>
         <tag>HEAD</tag>
     </scm>
