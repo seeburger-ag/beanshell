@@ -28,9 +28,9 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>org.apache-extras.beanshell</groupId>
+    <groupId>com.seeburger.fork</groupId>
     <artifactId>bsh</artifactId>
-    <version>2.1.0-SNAPSHOT</version>
+    <version>2.1.0.SEE1-SNAPSHOT</version>
     <packaging>bundle</packaging>
 
     <name>BeanShell</name>
@@ -38,7 +38,7 @@
         with object scripting language features, written in Java. BeanShell
         dynamically executes standard Java syntax and extends it with common
         scripting conveniences such as loose types, commands, and method closures
-        like those in Perl and JavaScript. 
+        like those in Perl and JavaScript.
     </description>
     <url>https://github.com/beanshell/beanshell/</url>
     <licenses>
@@ -55,13 +55,13 @@
     </properties>
 
     <scm>
-        <connection>scm:git:git://github.com/beanshell/beanshell.git</connection>
+        <connection>scm:git:git://github.com/seeburger-ag/beanshell.git</connection>
         <developerConnection>scm:git:git@github.com:beanshell/beanshell.git</developerConnection>
-        <url>https://github.com/beanshell/beanshell/</url>
+        <url>https://github.com/seeburger-ag/beanshell/</url>
         <tag>HEAD</tag>
     </scm>
     <developers>
-        <!-- Current maintainers according to 
+        <!-- Current maintainers according to
              https://github.com/beanshell/
         -->
         <developer>
@@ -113,7 +113,7 @@
             <organizationUrl>http://www.apache-extras.org/</organizationUrl>
         </developer>
         <developer>
-	    <id>mjwall</id>
+        <id>mjwall</id>
             <name>Michael Wall</name>
             <email>mjwall@gmail.com</email>
             <organization>Apache Extras</organization>
@@ -128,10 +128,15 @@
 
     <distributionManagement>
         <repository>
-            <id>bintray-beanshell-Beanshell-bsh</id>
-            <name>beanshell-Beanshell-bsh</name>
-            <url>https://api.bintray.com/maven/beanshell/Beanshell/bsh</url>
+            <id>release</id>
+            <name>SEE Release Distribution Repository</name>
+            <url>http://repo.seeburger.de/archiva/repository/release/</url>
         </repository>
+        <snapshotRepository>
+            <id>snapshot</id>
+            <name>SEE Development Snapshot Repository</name>
+            <url>http://repo.seeburger.de/archiva/repository/snapshot/</url>
+        </snapshotRepository>
     </distributionManagement>
 
     <build>
@@ -144,7 +149,7 @@
                     <execution>
                         <id>javacc</id>
                         <goals>
-                            <!-- jjtree disabled due to manual changes 
+                            <!-- jjtree disabled due to manual changes
                                                              in the previously generated bsh.jj :-
                             <goal>jjtree-javacc</goal>-->
                             <!-- disabled due to manual changes in the
@@ -166,12 +171,12 @@
                     </archive>
                 </configuration>
             </plugin>
-		<plugin>
-			<groupId>org.apache.felix</groupId>
-			<artifactId>maven-bundle-plugin</artifactId>
-			<version>3.0.1</version>
-			<extensions>true</extensions>
-		</plugin>
+        <plugin>
+            <groupId>org.apache.felix</groupId>
+            <artifactId>maven-bundle-plugin</artifactId>
+            <version>3.0.1</version>
+            <extensions>true</extensions>
+        </plugin>
         </plugins>
     </build>
 
@@ -184,7 +189,7 @@
             <scope>test</scope>
         </dependency>
         <!-- TODO: Replace src/main/java/bsh/org/objectweb/asm/
-          with a shadowed asm 
+          with a shadowed asm
         <dependency>
          <groupId>asm</groupId>
          <artifactId>asm</artifactId>
