@@ -182,6 +182,8 @@
                     <instructions>
 <!--                         <Export-Package>${osgi.exported.packages}</Export-Package> -->
                         <Import-Package>${osgi.imported.packages}</Import-Package>
+                        <_noee>true</_noee>
+                        <_nouses>true</_nouses>
                     </instructions>
                 </configuration>
             </plugin>
